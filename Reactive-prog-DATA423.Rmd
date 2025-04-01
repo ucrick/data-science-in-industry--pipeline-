@@ -1,0 +1,543 @@
+---
+title: "R Notebook"
+author: "Nicholas Ward"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+    theme: "cerulean"
+runtime: shiny
+---
+
+# Preliminaries
+
+## Packages
+
+This notebook will depend on the following packages. Please ensure they are installed before continuing.
+
+-   shiny
+-   shinycssloaders
+-   shinyjs
+-   recipes
+-   caret
+-   rpart
+-   modeldata
+
+```{r include=FALSE}
+library(shiny)
+library(shinycssloaders)
+library(shinyjs)
+library(recipes)
+library(visdat)
+library(caret)
+library(rpart)
+library(modeldata)
+```
+
+## Visual editor
+
+We are employing a more standard form of RMarkdown so that we can write Shiny application code in our snippets. This markdown file can be used to generate a formatted document with a series of shiny apps embedded in it. Just press "Run Document", above. Before you rush off to try this, I suggest you read on.
+
+This markdown document can also be viewed with the "Use Visual Editor" option, Ctrl-Shift-F4 provided your RStudio version permits this. This has the advantage of letting you change the code (if you choose to.) It is also the mode that has been tested. The text in this tutorial is written assuming that you are using the visual editor.
+
+The code is organised in three parts: **ui**, **server** and the call to run the app. This is a bit different to how we do this using R files but the idea is similar.
+
+First the **ui**
+
+```{r}
+library(shiny)
+ui1 <- fluidPage(
+  titlePanel("Old Faithful Geyser Data"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("bins", "Number of bins:", min = 1, max = 50, value = 30)
+    ),
+    mainPanel(
+      plotOutput("distPlot")
+    )
+  )
+)
+```
+
+Then the **server**
+
+```{r}
+server1 <- function(input, output) {
+  output$distPlot <- renderPlot({
+    x    <- faithful[, 2]
+    bins <- seq(min(x), max(x), length.out = input$bins + 1)
+    Sys.sleep(time = 2)
+    hist(x, breaks = bins, col = 'darkgray', border = 'white')
+  })
+}
+
+```
+
+Now we run it and direct the output to your browser. Notice that the browser should be your default browser rather than the RStudio browser emulator.
+
+```{r}
+shinyApp(ui = ui1, server = server1, options = list(launch.browser=TRUE))
+```
+
+------------------------------------------------------------------------
+
+Well done. You are back. You may have shut down the browser tab displaying the app or you may not. Either way, your R session thinks it is still busy. There is a red button in the Console window that you should press to finish the shiny session. The red box in the previous code chunk will do the same. Press either now.
+
+------------------------------------------------------------------------
+
+Some error messages may have appeared beneath the code chunk we just ran. There is a simple way to make the app exit better when it is no longer in use. We need to add a `onSessionEnded()` line in the server part of the code. See below and then run this chunk and the following one. Finally close the app's browser tab when you are done.
+
+```{r echo=TRUE}
+server2 <- function(input, output) {
+  # here is the new bit  
+  onSessionEnded(function() {
+    stopApp()
+  })
+  
+  output$distPlot <- renderPlot({
+    x    <- faithful[, 2]
+    bins <- seq(min(x), max(x), length.out = input$bins + 1)
+    Sys.sleep(time = 2)
+    hist(x, breaks = bins, col = 'darkgray', border = 'white')
+  })
+}
+```
+
+```{r}
+shinyApp(ui = ui1, server = server2, options = list(launch.browser=TRUE))
+```
+
+------------------------------------------------------------------------
+
+Welcome back. Did you see that RStudio is no longer busy? This time, closing the app session stopped the app running. This has great benefits when developing your apps.
+
+You seem to have the hang of things so we can move on to some enhancements.
+
+# Enhancements
+
+## Spinners
+
+When charts take a long time to calculate and draw there is some merit in letting the user know that things have not hung - the app is simply busy. A great way to do this is to show a busy "spinner" in the space where the chart will appear. The package **shinycssloaders** provides a `withSpinner()` function that does this for us. Here are the changes to th **ui** that are needed to add this enhancement.
+
+```{r}
+library(shinycssloaders)
+ui3 <- fluidPage(
+  titlePanel("Old Faithful Geyser Data"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("bins", "Number of bins:",min = 1, max = 50, value = 30)
+    ),
+    mainPanel(
+      # here's the new code
+      withSpinner(
+        plotOutput("distPlot")
+      )
+    )
+  )
+)
+```
+
+After you run the app, slide the Bins control to see the spinner in action.
+
+```{r}
+shinyApp(ui = ui3, server = server2, options = list(launch.browser=TRUE))
+```
+
+------------------------------------------------------------------------
+
+Did you see the spinner? Now you can guess why a 2 second delay has been coded into the chart.
+
+## Buttons
+
+Sometimes our reactive controls make life difficult. Perhaps a more natural way to work is to set a number of controls to what you need and then request (through a button) that some chart or model be generated. Multi-select controls that determine the variables to show in a `ggPairs()` plots is a good example of this.
+
+In order to turn off reactive behaviour we can wrap a reactive variable (e.g. input\$bins) in the `isolate()` function. The chart (or model) can be (re)triggered by a button which is not isolated. Here is how we would add a button that controls whether the chart can be redrawn.
+
+```{r}
+library(shinyjs)
+ui4 <- fluidPage(
+  titlePanel("Old Faithful Geyser Data"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("bins",
+                  "Number of bins:",
+                  min = 1,
+                  max = 50,
+                  value = 30),
+      # here is the new bit
+      actionButton(inputId = "Go", label = "Plot", icon = icon("play"))
+    ),
+    mainPanel(
+      withSpinner(
+        plotOutput("distPlot")
+      )
+    )
+  )
+)
+```
+
+Now to isolate the plot from *input\$bins* but not from *input\$Go.*
+
+```{r echo=TRUE}
+server4 <- function(input, output) {
+  onSessionEnded(function() {
+    stopApp()
+  })
+  
+  output$distPlot <- renderPlot({
+    input$Go #just a mention is sufficient for a dependency
+    x    <- faithful[, 2]
+    bins <- seq(min(x), max(x), length.out = isolate( input$bins ) + 1) # notice the isolate()
+    Sys.sleep(time = 2)
+    hist(x, breaks = bins, col = 'darkgray', border = 'white')
+  })
+}
+```
+
+```{r}
+shinyApp(ui = ui4, server = server4, options = list(launch.browser=TRUE))
+```
+
+The initial plot is drawn because the button is initialised to zero at start-up and this is sufficient to trigger the chart. This behaviour can be overridden.
+
+The `isolate()` function is our get-out-of-gaol-free card. Anything inside of this pass-through function is prevented from setting a dependency on "change."
+
+## Hiding and showing
+
+The Shiny package has a `conditionalPanel()` which is hard to use. There are easier ways to manage hiding and showing controls provided by the **shinyjs** package. This package needs to be initialised early in the **ui**. Here is an example of how to achieve this.
+
+```{r}
+library(shinyjs)
+ui5 <- fluidPage(
+  titlePanel("Old Faithful Geyser Data"),
+  # here's the new code
+  shinyjs::useShinyjs(),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput("bins", "Number of bins:",min = 1, max = 50, value = 30),
+      actionButton(inputId = "Go", label = "Plot", icon = icon("play"))
+    ),
+    mainPanel(
+      withSpinner(
+        plotOutput("distPlot")
+      )
+    )
+  )
+)
+```
+
+Let's ensure that the button control only appears after the bins control has been moved. An `observe()` block will trigger whenever its dependencies change. When the chart draws, the button is hidden.
+
+```{r echo=TRUE}
+server5 <- function(input, output) {
+  onSessionEnded(function() {
+    stopApp()
+  })
+  
+  # here is the new bit  
+  observe({
+    input$bins
+    shinyjs::showElement("Go")
+  })
+  
+  output$distPlot <- renderPlot({
+    input$Go
+    # here is the new bit  
+    shinyjs::hideElement("Go")
+    x    <- faithful[, 2]
+    bins <- seq(min(x), max(x), length.out = isolate(input$bins) + 1)
+    Sys.sleep(time = 2)
+    hist(x, breaks = bins, col = 'darkgray', border = 'white')
+  })
+}
+```
+
+```{r}
+shinyApp(ui = ui5, server = server5, options = list(launch.browser=TRUE))
+```
+
+The **shinyjs** package has other features to explore such as disabling and enabling controls. This package should be a standard tool in your Shiny toolkit.
+
+# Reactive sequence
+
+In this section there are several ways to code a Shiny app so that each of several dialogues (with one or more choices) can work together to mould your resulting chart/model/statistics to be a correct reflection of these choices. For this section we shall switch to the *Ames* housing data.
+
+## Reactive functions
+
+Reactive functions are a matter of good programming style. They enable a sequence of operations to happen to your data, each of which might be managed by controls. Whatever you do, and in whatever order you do it, a sequence of reactive functions will produce the correct results.
+
+Let's explore a practical example. Let's say the following data cleaning happens (and in this order)
+
+1.  The data is read in
+2.  Excessively missing variables are removed
+3.  Excessively missing observations are removed
+4.  The remaining data is imputed using KNN (K=5)
+5.  The missing data is charted in a *vis_dat* chart
+6.  A *recipe* is constructed
+7.  The data and *recipe* are used to train an **rpart** model
+8.  The model is summarised
+
+```{r echo=TRUE}
+library(recipes)
+library(visdat)
+library(caret)
+library(rpart)
+library(modeldata)
+pMiss <- function(x){ sum(is.na(x))/length(x)*100 }
+
+server6 <- function(input, output) {
+  onSessionEnded(function() {
+    stopApp()
+  })
+  
+  getData <- reactive({
+    data("ames", package = "modeldata")
+    set.seed(193)
+    ames$Longitude[sample(1:nrow(ames), 1000)] <- NA
+    ames
+  })
+
+  getCleanData1 <- reactive({
+    # remove excessively missing Vars
+    data <- getData()
+    vRatio <- apply(X = data, MARGIN = 2, FUN = pMiss)
+    data[, vRatio < input$VarThreshold]
+  })  
+
+  getCleanData2 <- reactive({
+    # remove excessively missing Obs
+    data <- getCleanData1()
+    oRatio <- apply(X = data, MARGIN = 1, FUN = pMiss)
+    data[oRatio < input$ObsThreshold, ]
+  })  
+
+  output$Missing <- renderPlot({
+    visdat::vis_dat(getCleanData2()) +
+      labs(title = paste("Thresholds VarMiss:", input$VarThreshold, "ObsMiss:", input$ObsThreshold))
+  }, width = 500)
+  
+  getRecipe <- reactive({
+    rec <- recipe(Sale_Price ~ ., getCleanData2())
+    if (input$ImpMethod == "KNN") {
+      rec <- step_impute_knn(rec, all_predictors(), neighbors = 5)
+    } else if (input$ImpMethod == "Median") {
+      rec <- step_impute_median(rec, Longitude)
+    } else if (input$ImpMethod == "Partial Del") {
+      rec <- step_naomit(rec, all_predictors(), skip = TRUE)
+    }
+    rec
+  })  
+
+  getModel <- reactive({
+    req(input$Go)
+    isolate({
+      caret::train(getRecipe(), 
+                   data = getCleanData2(), 
+                   method = "rpart", 
+                   na.action = na.rpart)
+    })
+  })
+  
+  output$Summary <- renderPrint({
+    print(getModel())
+  })
+}
+```
+
+Here is the corresponding ui code:
+
+```{r}
+ui6 <- fluidPage(
+  titlePanel("Ames Housing"),
+  shinyjs::useShinyjs(),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput(inputId = "VarThreshold", label = "Threshold of variable missingness", 
+                  min = 1, max = 100, value = 50, post = "%"),
+      sliderInput(inputId = "ObsThreshold", label = "Threshold of observations missingness", 
+                  min = 1, max = 100, value = 50, post = "%"),
+      selectInput(inputId = "ImpMethod", label = "Imputation method", 
+                  choices = c("None", "KNN", "Partial Del","Median"), selected = "None"),
+      actionButton(inputId = "Go", label = "Train", icon = icon("play"))
+    ),
+    mainPanel(
+      withSpinner(
+        plotOutput(outputId = "Missing")
+      ),
+      withSpinner(
+        verbatimTextOutput(outputId = "Summary")
+      )
+    )
+  )
+)
+```
+
+```{r}
+shinyApp(ui = ui6, server = server6, options = list(launch.browser=TRUE))
+```
+
+## Observers
+
+Observers are functions that "listen" for changes and fire off some code when any of the codes dependencies change. Observers are never called, nor are they connected directly to visible things, nor do they return anything. They typically update controls or populate reactive variables. In software engineering terms, we say that they exist for their "side-effects". Let's explore a practical example. Let's use the same data cleaning steps as before.
+
+Notice that in addition to **input** and **output** we have an addition reactive variable called **react**. This is created by the first line of code in the **server** function below. We shall use our observers to change the values of the **react** reactive variable.
+
+```{r echo=TRUE}
+pMiss <- function(x){ sum(is.na(x))/length(x)*100 }
+
+server7 <- function(input, output) {
+
+  react <- reactiveValues(cleanData1=NULL, cleanData2=NULL, recipe=NULL, model=NULL)
+
+  onSessionEnded(function() {
+    stopApp()
+  })
+  
+  getData <- reactive({
+    data("ames", package = "modeldata")
+    set.seed(193)
+    ames$Longitude[sample(1:nrow(ames), 1000)] <- NA
+    ames$Sale_Price <- log(ames$Sale_Price)
+    ames
+  })
+
+  observe({
+    # remove excessively missing Vars
+    data <- getData()
+    vRatio <- apply(X = data, MARGIN = 2, FUN = pMiss)
+    react$cleanData1 <- data[, vRatio < input$VarThreshold]
+  })  
+
+  observe({
+    # remove excessively missing Obs
+    data <- react$cleanData1
+    req(data)
+    oRatio <- apply(X = data, MARGIN = 1, FUN = pMiss)
+    react$cleanData2 <- data[oRatio < input$ObsThreshold, ]
+  })  
+
+  output$Missing <- renderPlot({
+    data <- react$cleanData2
+    req(data)
+    visdat::vis_dat(data) +
+      labs(title = paste("Thresholds VarMiss:", input$VarThreshold, "ObsMiss:", input$ObsThreshold))
+  }, width = 500)
+  
+  observe({
+    data <- react$cleanData2
+    req(data)
+    rec <- recipe(Sale_Price ~ ., data)
+    if (input$ImpMethod == "KNN") {
+      rec <- step_impute_knn(rec, Longitude, neighbors = 5)
+    } else if (input$ImpMethod == "Median") {
+      rec <- step_impute_mode(rec, Longitude)
+    } else if (input$ImpMethod == "Partial Del") {
+      rec <- step_naomit(rec, all_predictors(), skip = TRUE)
+    }
+    react$recipe <- rec
+  })  
+
+  observe({
+    req(input$Go)
+    isolate({
+      req(react$recipe, react$cleanData2)
+      mod <- caret::train(react$recipe, 
+                          data = react$cleanData2, 
+                          method = "rpart", 
+                          na.action = na.rpart)
+    })
+    react$model <- mod
+  })
+  
+  output$Summary <- renderPrint({
+    mod <- react$model
+    req(mod)
+    print(mod)
+  })
+}
+```
+
+The corresponding ui code which is the same as before.
+
+```{r fig.height=10}
+shinyApp(ui = ui6, server = server7, options = list(launch.browser=TRUE))
+```
+
+The downside of this style of reactivity is that the model output does not realise it is out-of-date (as indicated by the spinner) until after the model is retrained. It has only a split second in which to show the spinner (if you can see it at all). This can be easily fixed by adding `input$Go` as the first line of the `renderPrint()` function. Try this and verify the behaviour change.
+
+Another downside of this style of reactivity is the care we must now show in avoiding NULL variable being employed. The `req()` function can be interpreted to mean that its parameters are "required to be non-null" and (if applicable) TRUE. If this condition is unmet, the piece of reactive code remains "out-of-date" and will try again when one of its dependencies changes.
+
+## Other reactive functions
+
+The remaining reactive functions are:
+
+`eventReactive(reactive_var, {code})`
+
+Which is conceptually the same as:
+
+``` {reactive({}
+  reactive_var #will only trigger on this changing
+  isolate({
+    code
+  })
+})
+```
+
+------------------------------------------------------------------------
+
+`observeEvent(reactive_var, {code})`
+
+Which is conceptually the same as:
+
+``` {observe({}
+  reactive_var #will only trigger on this changing
+  isolate({
+    code
+  })
+})
+```
+
+# Style Guide
+
+## Things to avoid
+
+The reactive coding style makes it possible to make reliable apps. Using any other techniques is generally a bad idea. The things to particularly avoid are:
+
+-   Avoid using global variables
+
+-   Avoid doing **\<\<-** assignment
+
+-   Avoid reading your data in more than once
+
+-   Producing different behaviour depending on how you navigate through the app.
+
+## ui choices
+
+If you need choice lists in the **ui** code that are derived from the dataset that is loaded in the **server** code, the best solution is to update the relevant controls with a valid choice list from the server code. This means your **ui** code is written with a NULL choice list. It is up to the **server** code to update each control once the server has sufficient context to do this. There is a set of update functions for each control type:
+
+-   updateCheckboxInput()
+
+-   updateSelectInput()
+
+-   updateSliderInput()
+
+-   etc
+
+## Function req()
+
+This is a really handy function that gets you out of a number of different problems relating to reactive variables that have no defaults. There are times we need to protect the code from trying to do things with variables that are blank, zero, NA or NULL.
+
+The `req()` function can be used to test that
+
+-   a multiple-choice is not empty e.g. `req(length(input$myChoice)> 0)`
+
+-   a dataset has some rows e.g. `req(nrow(input$Data)>0)`
+
+-   a text variable is not the empty string e.g. `req(input$text)`
+
+-   a reactive function has returned a non-NULL value e.g. `req(getSignal())`
+
+If the `req()` test fails, the reactive code does not continue to the end. It is aborted. The reactive code remains out-of-date.
+
+End of tutorial
